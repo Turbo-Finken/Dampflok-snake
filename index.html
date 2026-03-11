@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Dampflok-Spielhalle</title>
+    <style>
+        :root {
+            --red: #b01e1e; --gold: #f1c40f; --dark: #1a1a1a;
+            --grass: #3d5a44; --iron: #7f8c8d; --sky: #3498db;
+        }
+        body { 
+            background: #0f1418; margin: 0; overflow: hidden; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            height: 100vh; font-family: 'Verdana', sans-serif; color: white;
+        }
+
+        /* --- LOBBY STYLING --- */
+        #lobby {
+            text-align: center; background: #2c3e50; padding: 50px;
+            border-radius: 20px; border: 4px solid var(--gold);
+            box-shadow: 0 0 50px rgba(0,0,0,0.8); z-index: 100;
+        }
+        .lobby-buttons { display: flex; gap: 20px; margin-top: 30px; }
+        .card {
+            background: #1a1a1a; padding: 20px; border-radius: 10px;
+            width: 200px; cursor: pointer; transition: 0.3s; border: 2px solid transparent;
+        }
+        .card:hover { border-color: var(--gold); transform: translateY(-5px); }
+        
+        /* --- GAME ENGINE STYLING --- */
+        #game-container { display: none; flex-direction: column; align-items: center; }
+        #top-ui {
+            width: 900px; background: var(--dark); padding: 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-radius: 15px 15px 0 0; border: 3px solid #333; border-bottom: none;
+        }
+        .stat-group { text-align: center; flex: 1; }
+        .val { font-size: 36px; font-weight: 900; color: var(--gold); display: block; }
+        .lbl { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
+        
+        #game-box { position: relative; border: 10px solid var(--dark); border-radius: 0 0 15px 15px; }
+        canvas { display: block; background: var(--grass); cursor: none; }
+
+        #overlay, #quiz-overlay {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.95);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100; text-align: center; padding: 40px;
+        }
+        #quiz-overlay { display: none; }
+        
+        .btn {
+            padding: 15px 30px; font-size: 18px; background: var(--iron); color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin: 10px; width: 80%;
+        }
+        .btn:hover { background: var(--sky); }
+        #shield-info {
+            position: absolute; top: 15px; right: 15px; padding: 8px 15px;
+            background: var(--sky); border-radius: 5px; font-weight: bold; display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- LOBBY -->
+    <div id="lobby">
+        <h1 style="color: var(--gold); font-size: 40px; margin: 0;">BAHNHOF LINDY</h1>
+        <p>Wähle dein Abenteuer:</p>
+        <div class="lobby-buttons">
+            <div class="card" onclick="selectMode('learn')">
+                <div style="font-size: 40px;">🎓</div>
+                <h3>Lern-Express</h3>
+                <p>Mit Quiz-Fragen</p>
+            </div>
+            <div class="card" onclick="selectMode('classic')">
+                <div style="font-size: 40px;">🕹️</div>
+                <h3>Endlos-Modus</h3>
+                <p>Nur Fahren</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SPIEL-BEREICH -->
+    <div id="game-container">
+        <div id="top-ui">
+            <div class="stat-group"><span class="lbl">Fortschritt</span><span id="score" class="val">0</span></div>
+            <div style="font-size: 45px;">🚂</div>
+            <div class="stat-group"><span class="lbl">Highscore</span><span id="high" class="val">0</span></div>
+        </div>
+
+        <div id="game-box">
+            <div id="overlay">
+                <h1 id="status-title" style="font-size: 40px; color: var(--gold);">BEREIT?</h1>
+                <button class="btn" style="background: var(--red);" onclick="start()">ZUG STARTEN</button>
+                <button class="btn" onclick="location.reload()">ZUR LOBBY</button>
+            </div>
+
+            <div id="quiz-overlay">
+                <h2 style="color: var(--sky);">WISSENS-STOPP</h2>
+                <p id="quiz-q" style="font-size: 22px;"></p>
+                <div id="quiz-ops"></div>
+                <p id="feedback"></p>
+            </div>
+
+            <div id="shield-info">🛡️ SCHILD AKTIV</div>
+            <canvas id="cvs"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const cvs = document.getElementById("cvs");
+        const ctx = cvs.getContext("2d");
+        const scoreEl = document.getElementById("score");
+        const highEl = document.getElementById("high");
+        const overlay = document.getElementById("overlay");
+        const quizOverlay = document.getElementById("quiz-overlay");
+        const shieldInd = document.getElementById("shield-info");
+
+        const grid = 50;
+        const speed = 2.5; 
+        const wagonGap = 20; 
+        cvs.width = 900; cvs.height = 550;
+
+        let active = false;
+        let score = 0;
+        let currentMode = 'classic';
+        let high = 0;
+
+        let pos = { x: 450, y: 275 };
+        let dir = { x: 1, y: 0 };
+        let nextDir = { x: 1, y: 0 };
+        let history = [];
+        let wagons = 3;
+        let coal = { x: 100, y: 100 };
+        let smoke = [];
+        let hasShield = false;
+
+        const cardData = [
+            { q: "Was war der wichtigste Motor der Industrialisierung?", a: ["Dampfmaschine", "Benzin", "Strom"], c: 0, info: "Richtig! Die Dampfmaschine veränderte die Welt." },
+            { q: "Warum mussten Kinder arbeiten?", a: ["Sie waren klein & billig", "Wegen der Schule", "Zum Spaß"], c: 0, info: "Leider wahr: Sie mussten oft 16h schuften." },
+            { q: "Wie nannte man die Arbeiterklasse?", a: ["Adel", "Proletariat", "Ritter"], c: 1, info: "Das Proletariat lebte oft in Armut." },
+            { q: "Was veränderte die Dampfmaschine?", a: ["Nichts", "Man wurde wetterunabhängig", "Man brauchte weniger Kohle"], c: 1, info: "Fabriken konnten nun überall stehen." },
+            { q: "Was war die 'Spinning Jenny'?", a: ["Eine Lok", "Eine Spinnmaschine", "Eine Sängerin"], c: 1, info: "Sie spann 100 Fäden gleichzeitig." },
+            { q: "Was brachte die Eisenbahn?", a: ["Pünktlichkeit & Fahrpläne", "Mehr Schlaf", "Weniger Handel"], c: 0, info: "Die Welt wurde 'kleiner' und schneller." }
+        ];
+
+        window.addEventListener("keydown", e => {
+            const k = e.key.toLowerCase();
+            if ((k === "w" || k === "arrowup") && dir.y === 0) nextDir = { x: 0, y: -1 };
+            if ((k === "s" || k === "arrowdown") && dir.y === 0) nextDir = { x: 0, y: 1 };
+            if ((k === "a" || k === "arrowleft") && dir.x === 0) nextDir = { x: -1, y: 0 };
+            if ((k === "d" || k === "arrowright") && dir.x === 0) nextDir = { x: 1, y: 0 };
+        });
+
+        function selectMode(mode) {
+            currentMode = mode;
+            high = localStorage.getItem("high_" + mode) || 0;
+            highEl.innerText = high;
+            document.getElementById("lobby").style.display = "none";
+            document.getElementById("game-container").style.display = "flex";
+        }
+
+        function start() {
+            score = 0; wagons = 3; history = []; hasShield = false;
+            pos = { x: 450, y: 275 }; dir = { x: 1, y: 0 }; nextDir = { x: 1, y: 0 };
+            for(let i=0; i<1000; i++) history.push({x: pos.x - i*speed, y: pos.y, a: 0});
+            scoreEl.innerText = "0";
+            overlay.style.display = "none";
+            shieldInd.style.display = "none";
+            active = true;
+            spawnCoal();
+        }
+
+        function spawnCoal() {
+            coal = { 
+                x: Math.floor(Math.random() * (cvs.width/grid - 2) + 1) * grid,
+                y: Math.floor(Math.random() * (cvs.height/grid - 2) + 1) * grid
+            };
+        }
+
+        function showQuiz() {
+            active = false;
+            const card = cardData[Math.min(Math.floor(score/5)-1, cardData.length - 1)];
+            document.getElementById("quiz-q").innerText = card.q;
+            const ops = document.getElementById("quiz-ops");
+            ops.innerHTML = "";
+            card.a.forEach((opt, i) => {
+                const b = document.createElement("button");
+                b.className = "btn";
+                b.innerText = opt;
+                b.onclick = () => {
+                    if(i === card.c) {
+                        hasShield = true; shieldInd.style.display = "block";
+                        quizOverlay.style.display = "none"; active = true;
+                    } else {
+                        quizOverlay.style.display = "none"; active = true;
+                    }
+                };
+                ops.appendChild(b);
+            });
+            quizOverlay.style.display = "flex";
+        }
+
+        function drawPart(x, y, ang, isHead) {
+            ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+            if(isHead) {
+                if(hasShield) { ctx.strokeStyle = "#3498db"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(0,0,35,0,7); ctx.stroke(); }
+                ctx.fillStyle = "#b01e1e"; ctx.fillRect(-24, -20, 48, 40);
+                ctx.fillStyle = "#1a1a1a"; ctx.fillRect(-18, -15, 38, 30);
+                ctx.fillStyle = "#f1c40f"; ctx.fillRect(16, -10, 6, 20);
+            } else {
+                ctx.fillStyle = "#444"; ctx.fillRect(-28, -2, 12, 4);
+                ctx.fillStyle = "#b01e1e"; ctx.fillRect(-22, -17, 44, 34); 
+            }
+            ctx.restore();
+        }
+
+        function update() {
+            if(!active) return;
+            dir = nextDir;
+            pos.x += dir.x * speed; pos.y += dir.y * speed;
+            history.unshift({x: pos.x, y: pos.y, a: Math.atan2(dir.y, dir.x)});
+            if(history.length > 2000) history.pop();
+
+            if(pos.x<20 || pos.x>cvs.width-20 || pos.y<20 || pos.y>cvs.height-20) {
+                if(hasShield) { hasShield = false; shieldInd.style.display="none"; pos.x -= dir.x*60; pos.y -= dir.y*60; }
+                else die();
+            }
+            
+            if(Math.hypot(pos.x - (coal.x+25), pos.y - (coal.y+25)) < 30) {
+                score++; scoreEl.innerText = score; wagons++;
+                if(score > high) { high = score; localStorage.setItem("high_" + currentMode, high); highEl.innerText = high; }
+                if(currentMode === 'learn' && score % 5 === 0) showQuiz();
+                spawnCoal();
+            }
+
+            if(score > 3) {
+                for(let i = 250; i < wagons * wagonGap; i += 10) {
+                    if(Math.hypot(pos.x - history[i].x, pos.y - history[i].y) < 15) {
+                        if(hasShield) { hasShield = false; shieldInd.style.display="none"; }
+                        else die();
+                    }
+                }
+            }
+            if(Math.random() > 0.7) smoke.push({x: pos.x, y: pos.y, s: 5, o: 1});
+            smoke.forEach(s => { s.y -= 0.6; s.o -= 0.02; s.s += 0.4; });
+            smoke = smoke.filter(s => s.o > 0);
+        }
+
+        function draw() {
+            ctx.fillStyle = "#3d5a44"; ctx.fillRect(0,0,cvs.width,cvs.height);
+            ctx.fillStyle = "#111"; ctx.beginPath();
+            ctx.arc(coal.x+25, coal.y+25, 12, 0, 7); ctx.fill();
+            smoke.forEach(s => {
+                ctx.fillStyle = `rgba(200,200,200,${s.o})`;
+                ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, 7); ctx.fill();
+            });
+            if(active || quizOverlay.style.display !== "none") {
+                for(let i=wagons; i>0; i--) {
+                    const p = history[i * wagonGap];
+                    if(p) drawPart(p.x, p.y, p.a, false);
+                }
+                drawPart(pos.x, pos.y, Math.atan2(dir.y, dir.x), true);
+            }
+            update();
+            requestAnimationFrame(draw);
+        }
+
+        function die() { 
+            active = false; 
+            document.getElementById("status-title").innerText = "ENTGLEIST!";
+            overlay.style.display = "flex"; 
+        }
+
+        draw();
+    </script>
+</body>
+</html>
